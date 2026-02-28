@@ -1,0 +1,546 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="HorasPro">
+    <title>HorasPro Ultimate - Export</title>
+
+    <!-- Frameworks y Librerías -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;700&display=swap');
+
+        :root {
+            --ios-bg: #000000;
+            --accent: #00e5ff;
+            --safe-area-top: env(safe-area-inset-top);
+            --safe-area-bottom: env(safe-area-inset-bottom);
+        }
+
+        * { 
+            box-sizing: border-box; 
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        html, body {
+            height: 100%;
+            overscroll-behavior: none;
+            background-color: var(--ios-bg);
+            color: #ffffff;
+            margin: 0;
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            overflow: hidden;
+        }
+
+        .mono { font-family: 'JetBrains Mono', monospace; }
+
+        .glass {
+            background: rgba(20, 20, 22, 0.85);
+            backdrop-filter: blur(25px);
+            -webkit-backdrop-filter: blur(25px);
+            border: 0.5px solid rgba(255,255,255,0.08);
+        }
+
+        .card-bg {
+            background: rgba(255,255,255,0.04);
+            border: 0.5px solid rgba(255,255,255,0.07);
+        }
+
+        .main-scroll {
+            overflow-y: auto;
+            -webkit-overflow-scrolling: touch;
+            height: 100%;
+            padding-bottom: 120px;
+        }
+
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+        input[type="time"] {
+            color-scheme: dark;
+            background: rgba(255,255,255,0.08);
+            border: 1px solid rgba(255,255,255,0.12);
+            border-radius: 14px;
+            padding: 12px;
+            font-weight: 600;
+            width: 100%;
+            font-size: 16px;
+            color: white;
+            outline: none;
+        }
+
+        .calendar-grid {
+            display: grid;
+            grid-template-columns: repeat(7, 1fr);
+            gap: 6px;
+        }
+
+        .calendar-day {
+            aspect-ratio: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            border-radius: 14px;
+            font-size: 12px;
+            position: relative;
+        }
+
+        @keyframes slideUp {
+            from { transform: translateY(20px); opacity: 0; }
+            to   { transform: translateY(0);    opacity: 1; }
+        }
+        .animate-slide-up { animation: slideUp 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+
+        #loader {
+            position: fixed;
+            inset: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            background: black;
+            z-index: 10000;
+            transition: opacity 0.5s ease;
+        }
+
+        @keyframes spin { to { transform: rotate(360deg); } }
+    </style>
+</head>
+<body>
+
+<div id="loader">
+    <div style="width:40px;height:40px;border:3px solid rgba(0,229,255,0.1);border-top-color:#00e5ff;border-radius:50%;animation: spin 0.8s linear infinite;"></div>
+    <p style="color:white;font-weight:900;letter-spacing:.3em;font-size:10px;text-transform:uppercase;opacity:.4;margin-top:20px">HorasPro Ultimate</p>
+</div>
+
+<div id="root"></div>
+
+<script type="text/babel">
+    const { useState, useEffect, useMemo, useCallback } = React;
+
+    const STORAGE_KEY = "horas_pro_v1_local";
+    const DAILY_GOAL = 8;
+
+    // Helper para actualizar iconos de Lucide tras cambios en el DOM
+    const updateIcons = () => { if (window.lucide) window.lucide.createIcons(); };
+
+    function App() {
+        const [records, setRecords] = useState(() => {
+            const saved = localStorage.getItem(STORAGE_KEY);
+            return saved ? JSON.parse(saved) : {};
+        });
+        const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split("T")[0]);
+        const [activeTab, setActiveTab] = useState('register');
+        const [toast, setToast] = useState(null);
+        
+        // Estados del formulario actual
+        const [shifts, setShifts] = useState([{ start: "", end: "" }]);
+        const [note, setNote] = useState("");
+        const [dayOff, setDayOff] = useState(false);
+        const [useAutoBreak, setUseAutoBreak] = useState(false);
+
+        // Control del Loader inicial
+        useEffect(() => {
+            const loader = document.getElementById('loader');
+            setTimeout(() => {
+                if (loader) {
+                    loader.style.opacity = '0';
+                    setTimeout(() => loader.remove(), 500);
+                }
+            }, 1000);
+        }, []);
+
+        // Actualizar iconos al cambiar de vista
+        useEffect(() => { updateIcons(); }, [activeTab, selectedDate, shifts, dayOff]);
+
+        // Guardar automáticamente en localStorage
+        useEffect(() => {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(records));
+        }, [records]);
+
+        // Cargar datos al cambiar de fecha
+        useEffect(() => {
+            const rec = records[selectedDate] || {};
+            setShifts(rec.shifts?.length ? rec.shifts : [{ start: "", end: "" }]);
+            setNote(rec.note || "");
+            setDayOff(rec.dayOff || false);
+            setUseAutoBreak(rec.useAutoBreak || false);
+        }, [selectedDate, records]);
+
+        const showToast = (msg) => {
+            setToast(msg);
+            setTimeout(() => setToast(null), 2500);
+        };
+
+        const calculateHours = (startStr, endStr) => {
+            if (!startStr || !endStr) return 0;
+            const [h1, m1] = startStr.split(":").map(Number);
+            const [h2, m2] = endStr.split(":").map(Number);
+            let d1 = h1 + m1/60;
+            let d2 = h2 + m2/60;
+            if (d2 < d1) d2 += 24; // Soporte para turnos que cruzan la medianoche
+            return d2 - d1;
+        };
+
+        const getStats = useCallback((dateStr, currentRecords) => {
+            const rec = currentRecords[dateStr];
+            if (!rec) return { total: 0, extra: 0, dayOff: false, hasData: false };
+            if (rec.dayOff) return { total: 0, extra: 0, dayOff: true, hasData: true };
+            
+            let total = (rec.shifts || []).reduce((acc, s) => acc + calculateHours(s.start, s.end), 0);
+            if (rec.useAutoBreak && total >= 6) total -= 0.5;
+            
+            return { 
+                total, 
+                extra: Math.max(0, total - DAILY_GOAL), 
+                dayOff: false, 
+                hasData: (rec.shifts && rec.shifts.length > 0) || rec.note 
+            };
+        }, []);
+
+        const saveDay = () => {
+            const validShifts = shifts.filter(s => s.start && s.end);
+            setRecords(prev => ({
+                ...prev,
+                [selectedDate]: { shifts: validShifts, note, dayOff, useAutoBreak }
+            }));
+            showToast("✓ Registro actualizado");
+        };
+
+        const monthStats = useMemo(() => {
+            const prefix = selectedDate.substring(0, 7);
+            const res = { total: 0, extra: 0, days: 0, off: 0 };
+            Object.keys(records).forEach(d => {
+                if (d.startsWith(prefix)) {
+                    const s = getStats(d, records);
+                    res.total += s.total;
+                    res.extra += s.extra;
+                    if (s.dayOff) res.off++;
+                    else if (s.total > 0) res.days++;
+                }
+            });
+            return res;
+        }, [records, selectedDate, getStats]);
+
+        const calendarDays = useMemo(() => {
+            const date = new Date(selectedDate + 'T12:00:00');
+            const year = date.getFullYear();
+            const month = date.getMonth();
+            const firstDay = new Date(year, month, 1).getDay();
+            const totalDays = new Date(year, month + 1, 0).getDate();
+            
+            const days = [];
+            const offset = firstDay === 0 ? 6 : firstDay - 1;
+            for (let i = 0; i < offset; i++) days.push(null);
+            for (let i = 1; i <= totalDays; i++) {
+                const dStr = `${year}-${(month+1).toString().padStart(2,'0')}-${i.toString().padStart(2,'0')}`;
+                days.push({ day: i, dateStr: dStr, stats: getStats(dStr, records) });
+            }
+            return days;
+        }, [selectedDate, records, getStats]);
+
+        return (
+            <div className="flex flex-col h-full overflow-hidden">
+                {/* Cabecera */}
+                <header className="pt-[calc(env(safe-area-inset-top)+1rem)] px-6 pb-4 glass sticky top-0 z-50">
+                    <div className="flex justify-between items-center">
+                        <div className="flex items-center gap-3">
+                            <div className="bg-[#00e5ff15] p-2 rounded-xl">
+                                <i data-lucide="zap" className="w-5 h-5 text-[#00e5ff]"></i>
+                            </div>
+                            <h1 className="font-extrabold text-lg tracking-tight">Horas<span className="text-[#00e5ff]">Pro</span></h1>
+                        </div>
+                        <div className="flex items-center gap-1 bg-white/5 p-1 rounded-full border border-white/10">
+                            <button onClick={() => {
+                                const d = new Date(selectedDate + 'T12:00:00');
+                                d.setMonth(d.getMonth() - 1);
+                                setSelectedDate(d.toISOString().split('T')[0]);
+                            }} className="p-1.5 hover:bg-white/10 rounded-full transition-colors">
+                                <i data-lucide="chevron-left" className="w-4 h-4"></i>
+                            </button>
+                            <span className="text-[10px] font-black uppercase tracking-widest px-2 min-w-[90px] text-center">
+                                {new Date(selectedDate + 'T12:00:00').toLocaleDateString('es-ES', { month:'short', year:'numeric' })}
+                            </span>
+                            <button onClick={() => {
+                                const d = new Date(selectedDate + 'T12:00:00');
+                                d.setMonth(d.getMonth() + 1);
+                                setSelectedDate(d.toISOString().split('T')[0]);
+                            }} className="p-1.5 hover:bg-white/10 rounded-full transition-colors">
+                                <i data-lucide="chevron-right" className="w-4 h-4"></i>
+                            </button>
+                        </div>
+                    </div>
+                </header>
+
+                {/* Área de desplazamiento principal */}
+                <main className="main-scroll no-scrollbar px-5 pt-6 flex-1">
+                    
+                    {/* VISTA: REGISTRO */}
+                    {activeTab === 'register' && (
+                        <div className="animate-slide-up space-y-6">
+                            <div className="flex gap-3 overflow-x-auto no-scrollbar pb-1">
+                                {[-2, -1, 0, 1, 2].map(idx => {
+                                    const d = new Date();
+                                    d.setDate(d.getDate() + idx);
+                                    const dStr = d.toISOString().split('T')[0];
+                                    const isSel = selectedDate === dStr;
+                                    return (
+                                        <button key={idx} onClick={() => setSelectedDate(dStr)}
+                                            className={`flex-shrink-0 w-14 h-16 rounded-2xl flex flex-col items-center justify-center transition-all ${
+                                                isSel ? 'bg-[#00e5ff] text-black shadow-lg shadow-[#00e5ff33]' : 'bg-white/5 text-white/40'
+                                            }`}>
+                                            <span className="text-[9px] font-black uppercase">{d.toLocaleDateString('es-ES',{weekday:'short'})}</span>
+                                            <span className="text-xl font-bold">{d.getDate()}</span>
+                                        </button>
+                                    );
+                                })}
+                                <label className="flex-shrink-0 w-14 h-16 rounded-2xl bg-white/5 flex items-center justify-center cursor-pointer relative overflow-hidden">
+                                    <i data-lucide="calendar" className="w-5 h-5 text-[#00e5ff]"></i>
+                                    <input type="date" className="absolute inset-0 opacity-0 cursor-pointer" value={selectedDate} onChange={e => setSelectedDate(e.target.value)} />
+                                </label>
+                            </div>
+
+                            <div className="glass rounded-[32px] p-6 space-y-6">
+                                <div className="flex justify-between items-center">
+                                    <div>
+                                        <h2 className="font-extrabold text-xl">Registro Diario</h2>
+                                        <p className="text-[10px] font-bold text-[#00e5ff99] uppercase tracking-[0.2em]">
+                                            {new Date(selectedDate + 'T12:00:00').toLocaleDateString('es-ES', { day:'numeric', month:'long' })}
+                                        </p>
+                                    </div>
+                                    <button onClick={() => setDayOff(!dayOff)} 
+                                        className={`px-4 py-2 rounded-full text-[10px] font-black tracking-widest transition-all ${
+                                            dayOff ? 'bg-emerald-500 text-black' : 'bg-white/5 text-white/40'
+                                        }`}>
+                                        {dayOff ? 'DÍA LIBRE' : 'LABORAL'}
+                                    </button>
+                                </div>
+
+                                {!dayOff && (
+                                    <div className="space-y-4">
+                                        {shifts.map((s, i) => (
+                                            <div key={i} className="flex items-center gap-3">
+                                                <input type="time" value={s.start} onChange={e => {
+                                                    const n = [...shifts]; n[i].start = e.target.value; setShifts(n);
+                                                }} />
+                                                <i data-lucide="arrow-right" className="w-4 h-4 text-white/20"></i>
+                                                <input type="time" value={s.end} onChange={e => {
+                                                    const n = [...shifts]; n[i].end = e.target.value; setShifts(n);
+                                                }} />
+                                                {shifts.length > 1 && (
+                                                    <button onClick={() => setShifts(shifts.filter((_, idx) => idx !== i))} className="text-rose-500 p-1">
+                                                        <i data-lucide="x-circle" className="w-5 h-5"></i>
+                                                    </button>
+                                                )}
+                                            </div>
+                                        ))}
+                                        <button onClick={() => setShifts([...shifts, {start:"", end:""}])} 
+                                            className="w-full py-3 rounded-2xl border border-dashed border-white/10 text-white/30 text-[10px] font-black uppercase tracking-widest hover:bg-white/5">
+                                            + Añadir Bloque
+                                        </button>
+
+                                        <div className="flex justify-between items-center p-4 card-bg rounded-2xl">
+                                            <span className="text-xs font-bold text-white/60">Pausa auto. (-30m)</span>
+                                            <div onClick={() => setUseAutoBreak(!useAutoBreak)} className={`w-12 h-6 rounded-full relative transition-colors cursor-pointer ${useAutoBreak ? 'bg-[#00e5ff]' : 'bg-white/10'}`}>
+                                                <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${useAutoBreak ? 'left-7' : 'left-1'}`}></div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
+
+                                <textarea 
+                                    className="w-full bg-white/5 border border-white/10 rounded-2xl p-4 text-sm min-h-[100px] outline-none focus:border-[#00e5ff44] resize-none"
+                                    placeholder="Notas o tareas importantes..."
+                                    value={note}
+                                    onChange={e => setNote(e.target.value)}
+                                />
+
+                                <button onClick={saveDay} className="w-full py-5 bg-[#00e5ff] text-black font-black rounded-3xl text-sm uppercase tracking-widest shadow-xl shadow-[#00e5ff22] active:scale-[0.98] transition-transform">
+                                    Guardar Jornada
+                                </button>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* VISTA: CALENDARIO */}
+                    {activeTab === 'calendar' && (
+                        <div className="animate-slide-up space-y-6">
+                            <h2 className="font-extrabold text-2xl px-1">Calendario</h2>
+                            <div className="glass rounded-[32px] p-5">
+                                <div className="calendar-grid mb-4">
+                                    {['L','M','X','J','V','S','D'].map(d => (
+                                        <div key={d} className="text-center text-[10px] font-black text-white/20 pb-2">{d}</div>
+                                    ))}
+                                    {calendarDays.map((d, i) => (
+                                        <div key={i} 
+                                            onClick={() => d && setSelectedDate(d.dateStr)}
+                                            className={`calendar-day cursor-pointer ${d?.dateStr === selectedDate ? 'bg-white/10 border-white/20' : ''}`}>
+                                            {d && (
+                                                <>
+                                                    <span className={`relative z-10 font-bold ${d.dateStr === new Date().toISOString().split('T')[0] ? 'text-[#00e5ff]' : ''}`}>
+                                                        {d.day}
+                                                    </span>
+                                                    {d.stats.hasData && (
+                                                        <div className={`absolute inset-1 rounded-xl opacity-20 ${d.stats.dayOff ? 'bg-emerald-500' : 'bg-[#00e5ff]'}`}></div>
+                                                    )}
+                                                    {d.stats.total > 0 && (
+                                                        <span className="text-[7px] mono opacity-40 mt-1">{d.stats.total.toFixed(1)}h</span>
+                                                    )}
+                                                </>
+                                            )}
+                                        </div>
+                                    ))}
+                                </div>
+                                <div className="border-t border-white/5 pt-4">
+                                    <h3 className="text-[10px] font-black text-white/20 uppercase tracking-widest mb-4">Historial Reciente</h3>
+                                    <div className="space-y-3">
+                                        {Object.keys(records).sort().reverse().slice(0, 5).map(date => {
+                                            const s = getStats(date, records);
+                                            return (
+                                                <div key={date} className="flex justify-between items-center p-4 card-bg rounded-2xl">
+                                                    <div className="flex items-center gap-3">
+                                                        <div className={`w-1 h-6 rounded-full ${s.dayOff ? 'bg-emerald-500' : 'bg-[#00e5ff]'}`}></div>
+                                                        <span className="text-xs font-bold">{new Date(date + 'T12:00:00').toLocaleDateString('es-ES', { day:'numeric', month:'short' })}</span>
+                                                    </div>
+                                                    <div className="flex gap-4 mono text-[11px] font-bold">
+                                                        <span className="text-white/60">{Math.floor(s.total)}h {Math.round((s.total % 1) * 60)}m</span>
+                                                        {s.extra > 0 && <span className="text-rose-500">+{Math.floor(s.extra)}h</span>}
+                                                    </div>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* VISTA: ESTADÍSTICAS */}
+                    {activeTab === 'stats' && (
+                        <div className="animate-slide-up space-y-6">
+                            <h2 className="font-extrabold text-2xl px-1">Resumen Mensual</h2>
+                            <div className="grid grid-cols-2 gap-4">
+                                <div className="glass p-5 rounded-[28px] border-b-4 border-[#00e5ff]">
+                                    <p className="text-[10px] font-black text-white/30 uppercase mb-2">Total Mes</p>
+                                    <p className="text-2xl font-bold mono">{Math.floor(monthStats.total)}h</p>
+                                </div>
+                                <div className="glass p-5 rounded-[28px] border-b-4 border-rose-500">
+                                    <p className="text-[10px] font-black text-white/30 uppercase mb-2">Horas Extra</p>
+                                    <p className="text-2xl font-bold mono text-rose-500">{Math.floor(monthStats.extra)}h</p>
+                                </div>
+                                <div className="glass p-5 rounded-[28px]">
+                                    <p className="text-[10px] font-black text-white/30 uppercase mb-2">Trabajados</p>
+                                    <p className="text-2xl font-bold mono">{monthStats.days}</p>
+                                </div>
+                                <div className="glass p-5 rounded-[28px]">
+                                    <p className="text-[10px] font-black text-white/30 uppercase mb-2">Días Libres</p>
+                                    <p className="text-2xl font-bold mono text-emerald-500">{monthStats.off}</p>
+                                </div>
+                            </div>
+
+                            <div className="glass p-6 rounded-[32px] space-y-4">
+                                <h3 className="text-xs font-black text-[#00e5ff] uppercase tracking-widest flex items-center gap-2">
+                                    <i data-lucide="bar-chart-2" className="w-4 h-4"></i> Distribución Semanal
+                                </h3>
+                                <div className="space-y-4 pt-2">
+                                    {[0, 1, 2, 3].map(w => (
+                                        <div key={w} className="space-y-2">
+                                            <div className="flex justify-between text-[10px] font-bold text-white/40">
+                                                <span>Semana {w+1}</span>
+                                                <span className="mono">38h / 40h</span>
+                                            </div>
+                                            <div className="h-1.5 bg-white/5 rounded-full overflow-hidden">
+                                                <div className="h-full bg-[#00e5ff] rounded-full" style={{ width: '85%' }}></div>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* VISTA: AJUSTES */}
+                    {activeTab === 'settings' && (
+                        <div className="animate-slide-up space-y-4">
+                            <h2 className="font-extrabold text-2xl px-1">Configuración</h2>
+                            
+                            <div className="glass p-2 rounded-[28px]">
+                                <button onClick={() => {
+                                    const blob = new Blob([JSON.stringify(records, null, 2)], {type: 'application/json'});
+                                    const url = URL.createObjectURL(blob);
+                                    const a = document.createElement('a');
+                                    a.href = url; a.download = 'backup_horaspro.json'; a.click();
+                                    showToast("Copia descargada");
+                                }} className="w-full flex items-center justify-between p-4 hover:bg-white/5 rounded-2xl transition-colors">
+                                    <div className="flex items-center gap-4">
+                                        <div className="p-2 bg-[#00e5ff10] rounded-xl"><i data-lucide="download" className="w-5 h-5 text-[#00e5ff]"></i></div>
+                                        <span className="font-bold text-sm">Exportar JSON</span>
+                                    </div>
+                                    <i data-lucide="chevron-right" className="w-4 h-4 text-white/10"></i>
+                                </button>
+                                
+                                <button onClick={() => {
+                                    if(confirm("¿Estás seguro? Se borrarán todos tus datos del dispositivo.")) {
+                                        setRecords({});
+                                        showToast("Datos borrados");
+                                    }
+                                }} className="w-full flex items-center justify-between p-4 hover:bg-white/5 rounded-2xl transition-colors text-rose-500">
+                                    <div className="flex items-center gap-4">
+                                        <div className="p-2 bg-rose-500/10 rounded-xl"><i data-lucide="trash-2" className="w-5 h-5"></i></div>
+                                        <span className="font-bold text-sm">Eliminar Historial</span>
+                                    </div>
+                                    <i data-lucide="chevron-right" className="w-4 h-4 text-white/10"></i>
+                                </button>
+                            </div>
+
+                            <div className="p-8 text-center opacity-20">
+                                <p className="text-[10px] font-black uppercase tracking-[0.4em]">HorasPro Ultimate v1.0</p>
+                                <p className="text-[8px] mt-2">Versión Exportada Offline</p>
+                            </div>
+                        </div>
+                    )}
+                </main>
+
+                {/* Navegación Inferior */}
+                <nav className="glass fixed bottom-0 left-0 right-0 pb-[env(safe-area-inset-bottom)] pt-3 px-6 flex justify-around items-center border-t border-white/5 z-50">
+                    {[
+                        { id: 'register', icon: 'clock', label: 'Hoy' },
+                        { id: 'calendar', icon: 'calendar', label: 'Mes' },
+                        { id: 'stats', icon: 'pie-chart', label: 'Resumen' },
+                        { id: 'settings', icon: 'sliders', label: 'Ajustes' }
+                    ].map(tab => (
+                        <button key={tab.id} onClick={() => setActiveTab(tab.id)} 
+                            className={`flex flex-col items-center gap-1.5 transition-all py-1 px-4 rounded-2xl ${activeTab === tab.id ? 'text-[#00e5ff]' : 'text-white/30'}`}>
+                            <i data-lucide={tab.icon} className="w-6 h-6"></i>
+                            <span className="text-[8px] font-black uppercase tracking-widest">{tab.label}</span>
+                        </button>
+                    ))}
+                </nav>
+
+                {/* Notificaciones Toast */}
+                {toast && (
+                    <div className="fixed bottom-24 left-1/2 -translate-x-1/2 bg-white text-black px-6 py-3 rounded-full font-black text-[10px] uppercase tracking-widest shadow-2xl z-[1000] animate-slide-up flex items-center gap-2">
+                        <div className="w-1.5 h-1.5 bg-[#00e5ff] rounded-full"></div>
+                        {toast}
+                    </div>
+                )}
+            </div>
+        );
+    }
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+</script>
+
+</body>
+</html>
+
